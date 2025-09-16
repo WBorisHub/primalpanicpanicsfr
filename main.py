@@ -9,17 +9,14 @@ import threading
 import sys
 import asyncio
 from datetime import datetime
-from playfab import PlayFabClientAPI
-from playfab.ClientModels import UpdateUserDataRequest
 
 # ------------------ Config ------------------
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
-PLAYFAB_TITLE_ID = os.environ.get("PLAYFAB_TITLE_ID")
 DB_FILE = "link_codes.json"
 LOG_WEBHOOK_URL = os.environ.get("LOG_WEBHOOK_URL")
 
-if not DISCORD_TOKEN or not PLAYFAB_TITLE_ID or not LOG_WEBHOOK_URL:
-    raise ValueError("DISCORD_TOKEN, PLAYFAB_TITLE_ID and LOG_WEBHOOK_URL must be set!")
+if not DISCORD_TOKEN or not LOG_WEBHOOK_URL:
+    raise ValueError("DISCORD_TOKEN and LOG_WEBHOOK_URL must be set!")
 
 # ------------------ Discord Bot ------------------
 intents = discord.Intents.default()
@@ -52,19 +49,11 @@ async def linkcode(interaction: discord.Interaction, code: str):
 
     data["discord_id"] = str(interaction.user.id)
     data["linked_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    data["discordLinked"] = True
     save_db()
 
-    # Update PlayFab user data
-    try:
-        PlayFabClientAPI.UpdateUserData(UpdateUserDataRequest(
-            PlayFabId=data["playfab_id"],
-            Data={"discordLinked": "true", "discordId": str(interaction.user.id)}
-        ))
-    except Exception as e:
-        print("PlayFab update error:", e)
-
     # Send log webhook
-    message = f"✅ Player Linked!\nTime: {data['linked_at']}\nMaster PlayFab ID: {data['playfab_id']}\nHWID: {data['hwid']}\nIP: {data['ip']}\nLink Code: {code}\nDiscord ID: {interaction.user.id}"
+    message = f"✅ Player Linked!\nTime: {data['linked_at']}\nMaster PlayFab ID: {data.get('playfab_id', 'N/A')}\nHWID: {data.get('hwid', 'N/A')}\nIP: {data.get('ip', 'N/A')}\nLink Code: {code}\nDiscord ID: {interaction.user.id}"
     try:
         requests.post(LOG_WEBHOOK_URL, json={"content": message}, timeout=5)
     except:
@@ -72,16 +61,16 @@ async def linkcode(interaction: discord.Interaction, code: str):
 
     del link_requests[code]
     save_db()
-    await interaction.response.send_message(f"✅ Successfully linked to PlayFab ID {data['playfab_id']}", ephemeral=True)
+    await interaction.response.send_message(f"✅ Successfully linked.", ephemeral=True)
 
-@bot.tree.command(name="unlink", description="Unlink your Discord account from PlayFab")
+@bot.tree.command(name="unlink", description="Unlink your Discord account")
 async def unlink(interaction: discord.Interaction):
     await interaction.response.send_message("⚠️ Unlinking is manual in this setup.", ephemeral=True)
 
 @bot.tree.command(name="addlinkcode", description="Manually add a link code")
 @app_commands.describe(playfab_id="PlayFab ID", code="6-digit code", hwid="HWID", ip="IP")
 async def addlinkcode(interaction: discord.Interaction, playfab_id: str, code: str, hwid: str, ip: str):
-    link_requests[code] = {"playfab_id": playfab_id, "hwid": hwid, "ip": ip, "discord_id": None}
+    link_requests[code] = {"playfab_id": playfab_id, "hwid": hwid, "ip": ip, "discord_id": None, "discordLinked": False}
     save_db()
     await interaction.response.send_message(f"✅ Code {code} registered.", ephemeral=True)
 
@@ -91,7 +80,7 @@ async def restart(interaction: discord.Interaction):
     await asyncio.sleep(1)
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-# ------------------ Flask API for Unity ------------------
+# ------------------ Flask API ------------------
 app = Flask(__name__)
 
 @app.route("/register_linkcode", methods=["POST"])
@@ -107,10 +96,10 @@ def register_linkcode():
         "hwid": data["hwid"],
         "ip": data["ip"],
         "discord_id": None,
+        "discordLinked": False,
         "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     }
     save_db()
-
     return jsonify({"success": True, "code": code})
 
 @app.route("/check_linkcode/<code>", methods=["GET"])
