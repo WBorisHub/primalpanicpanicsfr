@@ -1,69 +1,72 @@
 import os
-import asyncio
 import requests
 import discord
+from discord import app_commands
+from discord.ext import commands
 
-DISCORD_TOKEN = "YOUR_DISCORD_BOT_TOKEN"
-WEBHOOK_CHANNEL_ID = 123456789012345678
-PLAYFAB_TITLE_ID = "YOUR_PLAYFAB_TITLE_ID"
-PLAYFAB_SECRET = "YOUR_PLAYFAB_SECRET"
-SEARCH_LIMIT = 200
+DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
+PLAYFAB_TITLE_ID = os.environ["PLAYFAB_TITLE_ID"]
 
 intents = discord.Intents.default()
-intents.messages = True
-client = discord.Client(intents=intents)
+bot = commands.Bot(command_prefix="/", intents=intents)
+link_requests = {}  # stores Unity codes temporarily
 
-def find_code_in_messages(channel, code):
-    msgs = []
-    try:
-        msgs = asyncio.run(channel.history(limit=SEARCH_LIMIT).flatten())
-    except:
-        msgs = asyncio.run(channel.history(limit=SEARCH_LIMIT).flatten())
-    for m in msgs:
-        if code in m.content:
-            return m.content
-    return None
+@bot.event
+async def on_ready():
+    await bot.tree.sync()
+    print(f"Bot online as {bot.user}")
 
-def extract_field(content, field):
-    for line in content.splitlines():
-        if line.startswith(field):
-            return line.split(":",1)[1].strip()
-    return None
-
-def update_playfab_user(playfab_id, discord_id):
-    url = f"https://{PLAYFAB_TITLE_ID}.playfabapi.com/Admin/UpdateUserInternalData"
-    headers = {"X-SecretKey": PLAYFAB_SECRET, "Content-Type": "application/json"}
-    body = {"PlayFabId": playfab_id, "Data": {"discordId": str(discord_id), "discordLinked": "true"}}
-    r = requests.post(url, json=body, headers=headers)
-    return r.status_code == 200
-
-@client.event
-async def on_message(message):
-    if message.author == client.user:
+# ------------------ /linkcode ------------------
+@bot.tree.command(name="linkcode", description="Link your Discord account to the game using the Unity code")
+@app_commands.describe(code="6-digit code from Unity")
+async def linkcode(interaction: discord.Interaction, code: str):
+    data = link_requests.get(code)
+    if not data:
+        await interaction.response.send_message("❌ Invalid or expired code.", ephemeral=True)
         return
-    if message.content.startswith("!link "):
-        code = message.content.split(" ",1)[1].strip()
-        channel = client.get_channel(WEBHOOK_CHANNEL_ID)
-        found = None
-        async for m in channel.history(limit=SEARCH_LIMIT):
-            if code in m.content:
-                found = m.content
-                break
-        if not found:
-            await message.channel.send("Code not found")
-            return
-        playfab_id = extract_field(found, "PlayFabId")
-        if not playfab_id:
-            await message.channel.send("PlayFabId not found in webhook message")
-            return
-        ok = update_playfab_user(playfab_id, message.author.id)
-        if ok:
-            await message.channel.send("Linked")
-            try:
-                await message.author.send("Your game account is now linked")
-            except:
-                pass
-        else:
-            await message.channel.send("Failed to update PlayFab")
 
-client.run(DISCORD_TOKEN)
+    url = f"https://{PLAYFAB_TITLE_ID}.playfabapi.com/Client/ExecuteCloudScript"
+    headers = {"Content-Type": "application/json"}
+    body = {
+        "FunctionName": "LinkDiscordAccount",
+        "FunctionParameter": {
+            "Code": code,
+            "DiscordId": str(interaction.user.id),
+            "HWID": data["hwid"],
+            "IP": data["ip"]
+        },
+        "GeneratePlayStreamEvent": True
+    }
+
+    r = requests.post(url, json=body, headers=headers)
+    if r.status_code == 200 and r.json().get("FunctionResult", {}).get("success"):
+        await interaction.response.send_message(f"✅ Linked successfully to PlayFab ID {data['playfab_id']}", ephemeral=True)
+        del link_requests[code]
+    else:
+        await interaction.response.send_message("❌ Failed to link account.", ephemeral=True)
+
+# ------------------ /unlink ------------------
+@bot.tree.command(name="unlink", description="Unlink your Discord account from your PlayFab account")
+async def unlink(interaction: discord.Interaction):
+    url = f"https://{PLAYFAB_TITLE_ID}.playfabapi.com/Client/ExecuteCloudScript"
+    headers = {"Content-Type": "application/json"}
+    body = {
+        "FunctionName": "UnlinkDiscordAccount",
+        "FunctionParameter": {"DiscordId": str(interaction.user.id)},
+        "GeneratePlayStreamEvent": True
+    }
+
+    r = requests.post(url, json=body, headers=headers)
+    if r.status_code == 200 and r.json().get("FunctionResult", {}).get("success"):
+        await interaction.response.send_message("✅ Unlinked successfully.", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Failed to unlink account.", ephemeral=True)
+
+# ------------------ /addlinkcode ------------------
+@bot.tree.command(name="addlinkcode", description="Register a new link code from Unity")
+@app_commands.describe(playfab_id="PlayFab ID", code="6-digit code", hwid="HWID", ip="IP")
+async def addlinkcode(interaction: discord.Interaction, playfab_id: str, code: str, hwid: str, ip: str):
+    link_requests[code] = {"playfab_id": playfab_id, "hwid": hwid, "ip": ip}
+    await interaction.response.send_message(f"Code {code} registered.", ephemeral=True)
+
+bot.run(DISCORD_TOKEN)
