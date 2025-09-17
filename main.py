@@ -5,6 +5,7 @@ import random
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord.ui import View, Button
 from flask import Flask, request, jsonify
 from datetime import datetime
 import threading
@@ -13,6 +14,7 @@ DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 DB_FILE = "link_codes.json"
 LOG_WEBHOOK_URL = os.environ.get("LOG_WEBHOOK_URL")
 BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", 0))
+AUTHORIZE_URL = "https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot&permissions=0"
 
 if not DISCORD_TOKEN or not LOG_WEBHOOK_URL:
     raise ValueError("DISCORD_TOKEN and LOG_WEBHOOK_URL must be set!")
@@ -95,7 +97,17 @@ async def require_linked(interaction: discord.Interaction):
     for data in link_requests.values():
         if data.get("discord_id") == str(interaction.user.id) and data.get("discordLinked"):
             return True
-    await interaction.response.send_message("❌ You must link your Discord first using /linkcode.", ephemeral=True)
+
+    embed = discord.Embed(
+        title="❌ You need to authorize Primal Panic Bot to your Discord account",
+        description="Click the button below to authorize.",
+        color=discord.Color.orange(),
+        timestamp=datetime.utcnow()
+    )
+    button = Button(label="Authorize", url=AUTHORIZE_URL)
+    view = View()
+    view.add_item(button)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     return False
 
 @bot.tree.command(name="linkcode", description="Link your Discord account using Unity code")
@@ -129,6 +141,8 @@ async def linkcode(interaction: discord.Interaction, code: str):
 
 @bot.tree.command(name="linkstatus", description="Check your Discord link status")
 async def linkstatus(interaction: discord.Interaction):
+    if not await require_linked(interaction):
+        return
     linked = False
     for data in link_requests.values():
         if data.get("discord_id") == str(interaction.user.id) and data.get("discordLinked"):
@@ -139,6 +153,8 @@ async def linkstatus(interaction: discord.Interaction):
 
 @bot.tree.command(name="unlink", description="Unlink your Discord account")
 async def unlink(interaction: discord.Interaction):
+    if not await require_linked(interaction):
+        return
     removed = False
     for code, data in list(link_requests.items()):
         if data.get("discord_id") == str(interaction.user.id):
@@ -154,17 +170,19 @@ async def joinservers(interaction: discord.Interaction):
     if interaction.user.id != BOT_OWNER_ID:
         await interaction.response.send_message("❌ Only the bot owner can run this.", ephemeral=True)
         return
+    if not await require_linked(interaction):
+        return
     await interaction.response.send_message("✅ joinservers executed (placeholder)", ephemeral=True)
 
-# NEW UNREGISTER COMMAND
 @bot.tree.command(name="unregister", description="Unregister a link code")
 @app_commands.describe(code="6-digit link code to unregister")
 async def unregister(interaction: discord.Interaction, code: str):
+    if not await require_linked(interaction):
+        return
     data = link_requests.get(code)
     if not data:
         await interaction.response.send_message("❌ Code not found.", ephemeral=True)
         return
-
     embed = discord.Embed(
         title="🗑️ Link Code Unregistered",
         color=discord.Color.red(),
@@ -176,12 +194,10 @@ async def unregister(interaction: discord.Interaction, code: str):
     embed.add_field(name="IP", value=data.get("ip", "null"), inline=False)
     embed.add_field(name="Discord Linked", value="Yes" if data.get("discordLinked") else "No", inline=False)
     embed.add_field(name="Time", value=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), inline=False)
-
     try:
         requests.post(LOG_WEBHOOK_URL, json={"embeds": [embed.to_dict()]}, timeout=5)
     except Exception as e:
         print("Failed to send webhook:", e)
-
     del link_requests[code]
     save_db()
     await interaction.response.send_message(f"✅ Code {code} unregistered.", ephemeral=True)
