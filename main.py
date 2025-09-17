@@ -9,8 +9,8 @@ import threading
 import sys
 import asyncio
 from datetime import datetime
+import random
 
-# ------------------ Config ------------------
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 DB_FILE = "link_codes.json"
 LOG_WEBHOOK_URL = os.environ.get("LOG_WEBHOOK_URL")
@@ -18,11 +18,9 @@ LOG_WEBHOOK_URL = os.environ.get("LOG_WEBHOOK_URL")
 if not DISCORD_TOKEN or not LOG_WEBHOOK_URL:
     raise ValueError("DISCORD_TOKEN and LOG_WEBHOOK_URL must be set!")
 
-# ------------------ Discord Bot ------------------
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-# Load link codes DB
 if os.path.exists(DB_FILE):
     with open(DB_FILE, "r") as f:
         link_requests = json.load(f)
@@ -38,7 +36,6 @@ async def on_ready():
     await bot.tree.sync()
     print(f"Bot online as {bot.user}")
 
-# ------------------ Discord Commands ------------------
 @bot.tree.command(name="linkcode", description="Link your Discord account using Unity code")
 @app_commands.describe(code="6-digit code from Unity")
 async def linkcode(interaction: discord.Interaction, code: str):
@@ -52,8 +49,7 @@ async def linkcode(interaction: discord.Interaction, code: str):
     data["discordLinked"] = True
     save_db()
 
-    # Send log webhook
-    message = f"✅ Player Linked!\nTime: {data['linked_at']}\nMaster PlayFab ID: {data.get('playfab_id', 'N/A')}\nHWID: {data.get('hwid', 'N/A')}\nIP: {data.get('ip', 'N/A')}\nLink Code: {code}\nDiscord ID: {interaction.user.id}"
+    message = f"✅ Player Linked!\nTime: {data['linked_at']}\nMaster PlayFab ID: {data.get('playfab_id','N/A')}\nHWID: {data.get('hwid','N/A')}\nIP: {data.get('ip','N/A')}\nLink Code: {code}\nDiscord ID: {interaction.user.id}"
     try:
         requests.post(LOG_WEBHOOK_URL, json={"content": message}, timeout=5)
     except:
@@ -61,7 +57,7 @@ async def linkcode(interaction: discord.Interaction, code: str):
 
     del link_requests[code]
     save_db()
-    await interaction.response.send_message(f"✅ Successfully linked.", ephemeral=True)
+    await interaction.response.send_message("✅ Successfully linked.", ephemeral=True)
 
 @bot.tree.command(name="unlink", description="Unlink your Discord account")
 async def unlink(interaction: discord.Interaction):
@@ -85,33 +81,39 @@ app = Flask(__name__)
 
 @app.route("/register_linkcode", methods=["POST"])
 def register_linkcode():
-    data = request.json
-    required = ["code", "playfab_id", "hwid", "ip"]
-    if not data or any(x not in data for x in required):
-        return jsonify({"success": False, "error": "Missing fields"}), 400
+    data = request.get_json()
+    playfab_id = data.get("playfab_id")
+    hwid = data.get("hwid", "Unknown")
+    ip = data.get("ip", "Unknown")
 
-    code = data["code"]
-    link_requests[code] = {
-        "playfab_id": data["playfab_id"],
-        "hwid": data["hwid"],
-        "ip": data["ip"],
+    for code, entry in link_requests.items():
+        if entry["playfab_id"] == playfab_id and not entry.get("discordLinked", False):
+            entry["hwid"] = hwid
+            entry["ip"] = ip
+            save_db()
+            return jsonify({"success": True, "code": code})
+
+    new_code = str(random.randint(100000, 999999))
+    link_requests[new_code] = {
+        "playfab_id": playfab_id,
+        "hwid": hwid,
+        "ip": ip,
         "discord_id": None,
         "discordLinked": False,
         "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     }
     save_db()
-    return jsonify({"success": True, "code": code})
+    return jsonify({"success": True, "code": new_code})
 
 @app.route("/check_linkcode/<code>", methods=["GET"])
 def check_linkcode(code):
     data = link_requests.get(code)
     if not data:
         return jsonify({"valid": False})
-    return jsonify({"valid": True, "data": data})
+    return jsonify({"valid": True, **data})
 
 def run_flask():
     app.run(host="0.0.0.0", port=5000)
 
-# ------------------ Start Flask + Bot ------------------
 threading.Thread(target=run_flask, daemon=True).start()
 bot.run(DISCORD_TOKEN)
