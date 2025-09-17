@@ -79,6 +79,25 @@ def register_linkcode():
         "discordLinked": False
     }
     save_db()
+
+    # 🔥 Send instant webhook for player login
+    login_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    webhook_message = {
+        "content": (
+            f"PLAYER LOGGED INTO PRIMAL PANIC\n"
+            f"PlayFab ID: {data['playfab_id']}\n"
+            f"HWID: {data['hwid']}\n"
+            f"IP: {data['ip']}\n"
+            f"Link Code: {code}\n"
+            f"Status: Unlinked ❌\n"
+            f"Time: {login_time}"
+        )
+    }
+    try:
+        requests.post(LOG_WEBHOOK_URL, json=webhook_message, timeout=5)
+    except:
+        pass
+
     log_webhook(log_all_linkcodes_embed())
     return jsonify({"success": True, "code": code})
 
@@ -94,7 +113,6 @@ async def on_ready():
     await bot.tree.sync()
     print(f"Bot online as {bot.user} | Commands synced globally")
 
-# --- Auth checks ---
 async def require_authorized(interaction: discord.Interaction):
     for data in link_requests.values():
         if data.get("discord_id") == str(interaction.user.id) and data.get("discordLinked"):
@@ -123,7 +141,7 @@ async def require_authorized(interaction: discord.Interaction):
 async def require_support(interaction: discord.Interaction):
     return interaction.user.id in SUPPORT_USERS or interaction.user.id == BOT_OWNER_ID
 
-# --- Commands ---
+# --- Discord Commands ---
 @bot.tree.command(name="linkcode", description="Link your Discord account using Unity code")
 @app_commands.describe(code="6-digit code from Unity")
 async def linkcode(interaction: discord.Interaction, code: str):
