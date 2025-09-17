@@ -44,24 +44,19 @@ def log_webhook(embed):
         pass
 
 def log_all_linkcodes_embed():
-    embed = discord.Embed(title="📄 Linked & Authorized Users", color=0x00ff00, timestamp=datetime.utcnow())
+    embed = discord.Embed(title="📄 Linked Codes Log", color=0x00ff00, timestamp=datetime.utcnow())
     for code, data in link_requests.items():
-        if data.get("discordLinked"):
-            embed.add_field(
-                name=f"Code: {code}",
-                value=(
-                    f"PlayFab ID: {data.get('playfab_id','N/A')}\n"
-                    f"HWID: {data.get('hwid','N/A')}\n"
-                    f"IP: {data.get('ip','N/A')}\n"
-                    f"Discord ID: {data.get('discord_id')}\n"
-                    f"Linked At: {data.get('linked_at','N/A')}"
-                ),
-                inline=False
-            )
-    for user_id in AUTHORIZED_USERS:
+        status = "🔗 Linked" if data.get("discordLinked") else "❌ Unlinked"
         embed.add_field(
-            name=f"Authorized User: {user_id}",
-            value="No link code, authorized directly.",
+            name=f"Code: {code}",
+            value=(
+                f"PlayFab ID: {data.get('playfab_id','N/A')}\n"
+                f"HWID: {data.get('hwid','N/A')}\n"
+                f"IP: {data.get('ip','N/A')}\n"
+                f"Discord ID: {data.get('discord_id','N/A')}\n"
+                f"Status: {status}\n"
+                f"Linked At: {data.get('linked_at','N/A')}"
+            ),
             inline=False
         )
     return embed
@@ -194,7 +189,7 @@ async def addlinkedcodes(interaction: discord.Interaction, playfab_id: str, hwid
     save_db()
     await interaction.response.send_message(f"✅ Code {code} added.", ephemeral=True)
 
-@bot.tree.command(name="linkedlogs", description="Show all linked and authorized users")
+@bot.tree.command(name="linkedlogs", description="Show all linked codes logs")
 async def linkedlogs(interaction: discord.Interaction):
     if not await require_support(interaction):
         await interaction.response.send_message("❌ You don't have permission.", ephemeral=True)
