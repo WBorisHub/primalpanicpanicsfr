@@ -9,10 +9,10 @@ from discord.ui import View, Button
 from flask import Flask, request, jsonify
 from datetime import datetime
 import threading
-import sys
 
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 DB_FILE = "link_codes.json"
+BAN_DB_FILE = "ban_records.json"
 LOG_WEBHOOK_URL = os.environ.get("LOG_WEBHOOK_URL")
 BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", 0))
 AUTHORIZE_URL = "https://discord.com/oauth2/authorize?client_id=1417616334631731310"
@@ -33,9 +33,19 @@ if os.path.exists(DB_FILE):
 else:
     link_requests = {}
 
+if os.path.exists(BAN_DB_FILE):
+    with open(BAN_DB_FILE, "r") as f:
+        ban_records = json.load(f)
+else:
+    ban_records = {}
+
 def save_db():
     with open(DB_FILE, "w") as f:
         json.dump(link_requests, f, indent=4)
+
+def save_bans():
+    with open(BAN_DB_FILE, "w") as f:
+        json.dump(ban_records, f, indent=4)
 
 def log_webhook(embed):
     try:
@@ -79,23 +89,16 @@ def register_linkcode():
         "discordLinked": False
     }
     save_db()
-    login_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    webhook_message = {
-        "content": (
-            f"PLAYER LOGGED INTO PRIMAL PANIC\n"
-            f"PlayFab ID: {data['playfab_id']}\n"
-            f"HWID: {data['hwid']}\n"
-            f"IP: {data['ip']}\n"
-            f"Link Code: {code}\n"
-            f"Status: Unlinked ❌\n"
-            f"Time: {login_time}"
-        )
-    }
-    try:
-        requests.post(LOG_WEBHOOK_URL, json=webhook_message, timeout=5)
-    except:
-        pass
-    log_webhook(log_all_linkcodes_embed())
+    bans_count = len(ban_records.get(data["playfab_id"], []))
+    embed = discord.Embed(title="✅ Player Linked!", color=discord.Color.green(), timestamp=datetime.utcnow())
+    embed.add_field(name="Master PlayFab ID", value=data.get("playfab_id","N/A"), inline=False)
+    embed.add_field(name="HWID", value=data.get("hwid","N/A"), inline=False)
+    embed.add_field(name="IP", value=data.get("ip","N/A"), inline=False)
+    embed.add_field(name="Link Code", value=code, inline=False)
+    embed.add_field(name="Discord ID", value="Pending", inline=False)
+    embed.add_field(name="Status", value="❌ Unlinked", inline=False)
+    embed.add_field(name="Ban Count", value=str(bans_count), inline=False)
+    log_webhook(embed.to_dict())
     return jsonify({"success": True, "code": code})
 
 @app.route("/check_linkcode/<code>", methods=["GET"])
@@ -150,6 +153,7 @@ async def linkcode(interaction: discord.Interaction, code: str):
     data["linked_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     data["discordLinked"] = True
     save_db()
+    bans_count = len(ban_records.get(data["playfab_id"], []))
     embed = discord.Embed(title="✅ Player Linked!", color=discord.Color.green(), timestamp=datetime.utcnow())
     embed.add_field(name="Master PlayFab ID", value=data.get("playfab_id","N/A"), inline=False)
     embed.add_field(name="HWID", value=data.get("hwid","N/A"), inline=False)
@@ -157,6 +161,7 @@ async def linkcode(interaction: discord.Interaction, code: str):
     embed.add_field(name="Link Code", value=code, inline=False)
     embed.add_field(name="Discord ID", value=interaction.user.id, inline=False)
     embed.add_field(name="Status", value="🔗 Linked", inline=False)
+    embed.add_field(name="Ban Count", value=str(bans_count), inline=False)
     log_webhook(embed.to_dict())
     del link_requests[code]
     save_db()
@@ -164,22 +169,39 @@ async def linkcode(interaction: discord.Interaction, code: str):
 
 @bot.tree.command(name="linkstatus", description="Check your Discord link status")
 async def linkstatus(interaction: discord.Interaction):
-    if not await require_authorized(interaction):
-        return
-    await interaction.response.send_message("✅ You are linked or authorized.", ephemeral=True)
+    linked_code = None
+    for code, data in link_requests.items():
+        if data.get("discord_id") == str(interaction.user.id) and data.get("discordLinked"):
+            linked_code = code
+            break
+    if linked_code:
+        data = link_requests[linked_code]
+        msg = (
+            f"✅ YOU ARE CURRENTLY LINKED\n"
+            f"PlayFab ID: {data.get('playfab_id','N/A')}\n"
+            f"HWID: {data.get('hwid','N/A')}\n"
+            f"IP: {data.get('ip','N/A')}\n"
+            f"Link Code: {linked_code}\n"
+            f"Linked At: {data.get('linked_at','N/A')}"
+        )
+    else:
+        msg = "❌ You are not linked."
+    await interaction.response.send_message(msg, ephemeral=True)
 
 @bot.tree.command(name="unlink", description="Unlink your Discord account")
 async def unlink(interaction: discord.Interaction):
     unlinked = False
     for code, data in list(link_requests.items()):
-        if data.get("discord_id") == str(interaction.user.id):
-            embed = discord.Embed(title="❌ Player Unlinked", color=discord.Color.red(), timestamp=datetime.utcnow())
+        if data.get("discord_id") == str(interaction.user.id) and data.get("discordLinked"):
+            embed = discord.Embed(title="❌ PLAYER UNLINKED", color=discord.Color.red(), timestamp=datetime.utcnow())
             embed.add_field(name="Master PlayFab ID", value=data.get("playfab_id","N/A"), inline=False)
             embed.add_field(name="HWID", value=data.get("hwid","N/A"), inline=False)
             embed.add_field(name="IP", value=data.get("ip","N/A"), inline=False)
             embed.add_field(name="Link Code", value=code, inline=False)
             embed.add_field(name="Discord ID", value=interaction.user.id, inline=False)
-            embed.add_field(name="Status", value="❌ Unlinked", inline=False)
+            embed.add_field(name="Status Before", value="🔗 Linked", inline=False)
+            embed.add_field(name="Status After", value="❌ Unlinked", inline=False)
+            embed.add_field(name="Unlinked At", value=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), inline=False)
             log_webhook(embed.to_dict())
             link_requests[code]["discordLinked"] = False
             link_requests[code]["discord_id"] = None
@@ -188,76 +210,32 @@ async def unlink(interaction: discord.Interaction):
     msg = "✅ Your account has been unlinked." if unlinked else "❌ You were not linked."
     await interaction.response.send_message(msg, ephemeral=True)
 
-@bot.tree.command(name="restart", description="Owner-only: restart the bot")
-async def restart(interaction: discord.Interaction):
-    if interaction.user.id != BOT_OWNER_ID:
-        await interaction.response.send_message("❌ Only the bot owner can restart.", ephemeral=True)
-        return
-    await interaction.response.send_message("♻️ Restarting bot and syncing commands globally...", ephemeral=True)
-    os.execv(sys.executable, [sys.executable] + sys.argv)
+class ShowBans(Button):
+    def __init__(self, ban_list):
+        super().__init__(label="Show Ban Reasons", style=discord.ButtonStyle.primary)
+        self.ban_list = ban_list
 
-@bot.tree.command(name="addlinkedcodes", description="Add linked codes manually")
-@app_commands.describe(playfab_id="PlayFab ID", hwid="HWID", ip="IP", code="6-digit code")
-async def addlinkedcodes(interaction: discord.Interaction, playfab_id: str, hwid: str, ip: str, code: str):
-    if not await require_support(interaction):
-        await interaction.response.send_message("❌ You don't have permission.", ephemeral=True)
-        return
-    link_requests[code] = {
-        "playfab_id": playfab_id,
-        "hwid": hwid,
-        "ip": ip,
-        "discord_id": None,
-        "discordLinked": False
-    }
-    save_db()
-    await interaction.response.send_message(f"✅ Code {code} added.", ephemeral=True)
+    async def callback(self, interaction: discord.Interaction):
+        reasons = "\n".join([f"{i+1}. {r}" for i,r in enumerate(self.ban_list)])
+        await interaction.response.send_message(f"Ban Reasons:\n{reasons}", ephemeral=True)
 
-@bot.tree.command(name="linkedlogs", description="Show all linked codes logs")
-async def linkedlogs(interaction: discord.Interaction):
-    if not await require_support(interaction):
-        await interaction.response.send_message("❌ You don't have permission.", ephemeral=True)
+@bot.tree.command(name="banhistory", description="Check player's ban history")
+@app_commands.describe(identifier="PlayFab ID or linked code")
+async def banhistory(interaction: discord.Interaction, identifier: str):
+    if not await require_authorized(interaction):
         return
-    embed = log_all_linkcodes_embed()
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    playfab_id = identifier
+    if identifier in link_requests and link_requests[identifier].get("discordLinked"):
+        playfab_id = link_requests[identifier]["playfab_id"]
+    bans = ban_records.get(playfab_id, [])
+    count = len(bans)
+    embed = discord.Embed(title=f"Ban History for {playfab_id}", color=discord.Color.red(), timestamp=datetime.utcnow())
+    embed.add_field(name="Total Bans", value=str(count), inline=False)
+    view = View()
+    if count > 0:
+        view.add_item(ShowBans(bans))
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-@bot.tree.command(name="deletelinkedcode", description="Delete a linked code")
-@app_commands.describe(code="6-digit code to delete")
-async def deletelinkedcode(interaction: discord.Interaction, code: str):
-    if not await require_support(interaction):
-        await interaction.response.send_message("❌ You don't have permission.", ephemeral=True)
-        return
-    data = link_requests.get(code)
-    if not data:
-        await interaction.response.send_message("❌ Code not found.", ephemeral=True)
-        return
-    del link_requests[code]
-    save_db()
-    embed = discord.Embed(title="🗑️ Linked Code Deleted", color=discord.Color.red(), timestamp=datetime.utcnow())
-    embed.add_field(name="Code", value=code, inline=False)
-    embed.add_field(name="PlayFab ID", value=data.get("playfab_id","N/A"), inline=False)
-    embed.add_field(name="HWID", value=data.get("hwid","N/A"), inline=False)
-    embed.add_field(name="IP", value=data.get("ip","N/A"), inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@bot.tree.command(name="addsupport", description="Owner-only: add support staff")
-@app_commands.describe(user="User to give support permissions")
-async def addsupport(interaction: discord.Interaction, user: discord.User):
-    if interaction.user.id != BOT_OWNER_ID:
-        await interaction.response.send_message("❌ Only the bot owner can add support.", ephemeral=True)
-        return
-    SUPPORT_USERS.add(user.id)
-    await interaction.response.send_message(f"✅ {user.mention} added as support.", ephemeral=True)
-
-@bot.tree.command(name="removesupport", description="Owner-only: remove support staff")
-@app_commands.describe(user="User to remove support permissions")
-async def removesupport(interaction: discord.Interaction, user: discord.User):
-    if interaction.user.id != BOT_OWNER_ID:
-        await interaction.response.send_message("❌ Only the bot owner can remove support.", ephemeral=True)
-        return
-    SUPPORT_USERS.discard(user.id)
-    await interaction.response.send_message(f"✅ {user.mention} removed from support.", ephemeral=True)
-
-# --- Flask Web Server ---
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
