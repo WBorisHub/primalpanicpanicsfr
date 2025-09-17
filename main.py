@@ -24,7 +24,8 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="/", intents=intents)
 app = Flask(__name__)
 
-AUTHORIZED_USERS = set()  # <- new authorized users cache
+AUTHORIZED_USERS = set()
+SUPPORT_USERS = set()
 
 if os.path.exists(DB_FILE):
     with open(DB_FILE, "r") as f:
@@ -43,23 +44,26 @@ def log_webhook(embed):
         pass
 
 def log_all_linkcodes_embed():
-    embed = {
-        "title": "📄 All Registered Link Codes",
-        "color": 0x00ff00,
-        "timestamp": datetime.utcnow().isoformat(),
-        "fields": []
-    }
+    embed = discord.Embed(title="📄 Linked & Authorized Users", color=0x00ff00, timestamp=datetime.utcnow())
     for code, data in link_requests.items():
-        embed["fields"].append({
-            "name": f"Code: {code}",
-            "value": (
-                f"PlayFab ID: {data.get('playfab_id','N/A')}\n"
-                f"HWID: {data.get('hwid','N/A')}\n"
-                f"IP: {data.get('ip','N/A')}\n"
-                f"Discord Linked: {data.get('discordLinked', False)}"
-            ),
-            "inline": False
-        })
+        if data.get("discordLinked"):
+            embed.add_field(
+                name=f"Code: {code}",
+                value=(
+                    f"PlayFab ID: {data.get('playfab_id','N/A')}\n"
+                    f"HWID: {data.get('hwid','N/A')}\n"
+                    f"IP: {data.get('ip','N/A')}\n"
+                    f"Discord ID: {data.get('discord_id')}\n"
+                    f"Linked At: {data.get('linked_at','N/A')}"
+                ),
+                inline=False
+            )
+    for user_id in AUTHORIZED_USERS:
+        embed.add_field(
+            name=f"Authorized User: {user_id}",
+            value="No link code, authorized directly.",
+            inline=False
+        )
     return embed
 
 @app.route("/")
@@ -71,7 +75,6 @@ def register_linkcode():
     data = request.get_json()
     if not data or "playfab_id" not in data or "hwid" not in data or "ip" not in data:
         return jsonify({"success": False, "error": "Missing fields"}), 400
-
     code = str(random.randint(100000, 999999))
     link_requests[code] = {
         "playfab_id": data["playfab_id"],
@@ -96,18 +99,13 @@ async def on_ready():
     await bot.tree.sync()
     print(f"Bot online as {bot.user} | Commands synced globally")
 
-# --- New authorized check ---
+# --- Auth checks ---
 async def require_authorized(interaction: discord.Interaction):
-    # linked users via linkcode still work
     for data in link_requests.values():
         if data.get("discord_id") == str(interaction.user.id) and data.get("discordLinked"):
             return True
-
-    # already authorized
     if interaction.user.id in AUTHORIZED_USERS:
         return True
-
-    # try fetching user to verify bot access
     try:
         user = await bot.fetch_user(interaction.user.id)
         if user:
@@ -115,7 +113,6 @@ async def require_authorized(interaction: discord.Interaction):
             return True
     except:
         pass
-
     embed = discord.Embed(
         title="❌ You need to authorize the bot",
         description="Click the button below to authorize.",
@@ -128,7 +125,10 @@ async def require_authorized(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     return False
 
-# --- Discord Commands ---
+async def require_support(interaction: discord.Interaction):
+    return interaction.user.id in SUPPORT_USERS or interaction.user.id == BOT_OWNER_ID
+
+# --- Commands ---
 @bot.tree.command(name="linkcode", description="Link your Discord account using Unity code")
 @app_commands.describe(code="6-digit code from Unity")
 async def linkcode(interaction: discord.Interaction, code: str):
@@ -178,11 +178,11 @@ async def restart(interaction: discord.Interaction):
     await interaction.response.send_message("♻️ Restarting bot and syncing commands globally...", ephemeral=True)
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-@bot.tree.command(name="addlinkedcodes", description="Owner-only: add linked codes manually")
+@bot.tree.command(name="addlinkedcodes", description="Add linked codes manually")
 @app_commands.describe(playfab_id="PlayFab ID", hwid="HWID", ip="IP", code="6-digit code")
 async def addlinkedcodes(interaction: discord.Interaction, playfab_id: str, hwid: str, ip: str, code: str):
-    if interaction.user.id != BOT_OWNER_ID:
-        await interaction.response.send_message("❌ Only the bot owner can add codes.", ephemeral=True)
+    if not await require_support(interaction):
+        await interaction.response.send_message("❌ You don't have permission.", ephemeral=True)
         return
     link_requests[code] = {
         "playfab_id": playfab_id,
@@ -194,13 +194,50 @@ async def addlinkedcodes(interaction: discord.Interaction, playfab_id: str, hwid
     save_db()
     await interaction.response.send_message(f"✅ Code {code} added.", ephemeral=True)
 
-@bot.tree.command(name="linkedlogs", description="Owner-only: show all linked codes")
+@bot.tree.command(name="linkedlogs", description="Show all linked and authorized users")
 async def linkedlogs(interaction: discord.Interaction):
-    if interaction.user.id != BOT_OWNER_ID:
-        await interaction.response.send_message("❌ Only the bot owner can view logs.", ephemeral=True)
+    if not await require_support(interaction):
+        await interaction.response.send_message("❌ You don't have permission.", ephemeral=True)
         return
     embed = log_all_linkcodes_embed()
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="deletelinkedcode", description="Delete a linked code")
+@app_commands.describe(code="6-digit code to delete")
+async def deletelinkedcode(interaction: discord.Interaction, code: str):
+    if not await require_support(interaction):
+        await interaction.response.send_message("❌ You don't have permission.", ephemeral=True)
+        return
+    data = link_requests.get(code)
+    if not data:
+        await interaction.response.send_message("❌ Code not found.", ephemeral=True)
+        return
+    del link_requests[code]
+    save_db()
+    embed = discord.Embed(title="🗑️ Linked Code Deleted", color=discord.Color.red(), timestamp=datetime.utcnow())
+    embed.add_field(name="Code", value=code, inline=False)
+    embed.add_field(name="PlayFab ID", value=data.get("playfab_id","N/A"), inline=False)
+    embed.add_field(name="HWID", value=data.get("hwid","N/A"), inline=False)
+    embed.add_field(name="IP", value=data.get("ip","N/A"), inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="addsupport", description="Owner-only: add support staff")
+@app_commands.describe(user="User to give support permissions")
+async def addsupport(interaction: discord.Interaction, user: discord.User):
+    if interaction.user.id != BOT_OWNER_ID:
+        await interaction.response.send_message("❌ Only the bot owner can add support.", ephemeral=True)
+        return
+    SUPPORT_USERS.add(user.id)
+    await interaction.response.send_message(f"✅ {user.mention} added as support.", ephemeral=True)
+
+@bot.tree.command(name="removesupport", description="Owner-only: remove support staff")
+@app_commands.describe(user="User to remove support permissions")
+async def removesupport(interaction: discord.Interaction, user: discord.User):
+    if interaction.user.id != BOT_OWNER_ID:
+        await interaction.response.send_message("❌ Only the bot owner can remove support.", ephemeral=True)
+        return
+    SUPPORT_USERS.discard(user.id)
+    await interaction.response.send_message(f"✅ {user.mention} removed from support.", ephemeral=True)
 
 # --- Flask Web Server ---
 def run_flask():
