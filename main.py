@@ -4,7 +4,7 @@ import requests
 import random
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord.ui import View, Button
 from flask import Flask, request, jsonify
 from datetime import datetime
@@ -14,9 +14,8 @@ import sys
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 DB_FILE = "link_codes.json"
 LOG_WEBHOOK_URL = os.environ.get("LOG_WEBHOOK_URL")
-BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", 0)) 
+BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", 0))
 AUTHORIZE_URL = "https://discord.com/oauth2/authorize?client_id=1417616334631731310"
-TEST_GUILD_ID = int(os.environ.get("TEST_GUILD_ID", 0))
 
 if not DISCORD_TOKEN or not LOG_WEBHOOK_URL:
     raise ValueError("DISCORD_TOKEN and LOG_WEBHOOK_URL must be set!")
@@ -92,9 +91,8 @@ def check_linkcode(code):
 
 @bot.event
 async def on_ready():
-    guild = discord.Object(id=TEST_GUILD_ID)
-    await bot.tree.sync(guild=guild)
-    print(f"Bot online as {bot.user} | Commands synced to guild {TEST_GUILD_ID}")
+    await bot.tree.sync()
+    print(f"Bot online as {bot.user} | Commands synced globally")
 
 async def require_linked(interaction: discord.Interaction):
     for data in link_requests.values():
@@ -159,7 +157,7 @@ async def restart(interaction: discord.Interaction):
     if interaction.user.id != BOT_OWNER_ID:
         await interaction.response.send_message("❌ Only the bot owner can restart.", ephemeral=True)
         return
-    await interaction.response.send_message("♻️ Restarting bot...", ephemeral=True)
+    await interaction.response.send_message("♻️ Restarting bot and syncing commands globally...", ephemeral=True)
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 @bot.tree.command(name="addlinkedcodes", description="Owner-only: add linked codes manually")
