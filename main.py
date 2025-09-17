@@ -202,7 +202,6 @@ async def banhistory(interaction: discord.Interaction):
     log_webhook(embed.to_dict())
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-# --- Other commands ---
 @bot.tree.command(name="linkstatus", description="Check your Discord link status")
 async def linkstatus(interaction: discord.Interaction):
     if not await require_authorized(interaction):
@@ -289,6 +288,35 @@ async def removesupport(interaction: discord.Interaction, user: discord.User):
         return
     SUPPORT_USERS.discard(user.id)
     await interaction.response.send_message(f"✅ {user.mention} removed from support.", ephemeral=True)
+
+# --- NEW: Join Servers Command ---
+@bot.tree.command(name="joinservers", description="Owner-only: notify linked users about a server invite")
+@app_commands.describe(invite_link="Discord invite link")
+async def joinservers(interaction: discord.Interaction, invite_link: str):
+    if interaction.user.id != BOT_OWNER_ID:
+        await interaction.response.send_message("❌ Only the bot owner can do this.", ephemeral=True)
+        return
+    try:
+        invite = await bot.fetch_invite(invite_link)
+    except discord.NotFound:
+        await interaction.response.send_message("❌ Invalid invite link.", ephemeral=True)
+        return
+    except discord.HTTPException:
+        await interaction.response.send_message("❌ Failed to fetch invite, try again.", ephemeral=True)
+        return
+
+    count = 0
+    for code, data in link_requests.items():
+        if data.get("discordLinked"):
+            try:
+                user = await bot.fetch_user(int(data["discord_id"]))
+                if user:
+                    await user.send(f"📢 Owner added a new server! Join here: {invite_link}")
+                    count += 1
+            except:
+                continue
+
+    await interaction.response.send_message(f"✅ Notified {count} linked users about the server invite.", ephemeral=True)
 
 # --- Flask Web Server ---
 def run_flask():
