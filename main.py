@@ -13,8 +13,8 @@ import threading
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 DB_FILE = "link_codes.json"
 LOG_WEBHOOK_URL = os.environ.get("LOG_WEBHOOK_URL")
-BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", 0))
-AUTHORIZE_URL = "https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot&permissions=0"
+BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", 0)) 
+AUTHORIZE_URL = "https://discord.com/oauth2/authorize?client_id=1417616334631731310"
 
 if not DISCORD_TOKEN or not LOG_WEBHOOK_URL:
     raise ValueError("DISCORD_TOKEN and LOG_WEBHOOK_URL must be set!")
