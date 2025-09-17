@@ -171,8 +171,6 @@ async def linkcode(interaction: discord.Interaction, code: str):
     embed.add_field(name="Discord ID", value=interaction.user.id, inline=False)
     embed.add_field(name="Status", value="🔗 Linked", inline=False)
     log_webhook(embed.to_dict())
-    del link_requests[code]
-    save_db()
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="banhistory", description="Show total bans and reasons")
@@ -204,9 +202,7 @@ async def banhistory(interaction: discord.Interaction):
     log_webhook(embed.to_dict())
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-# --- include all other commands from previous script here ---
-# linkstatus, unlink, restart, addlinkedcodes, linkedlogs, deletelinkedcode, addsupport, removesupport
-
+# --- Other commands ---
 @bot.tree.command(name="linkstatus", description="Check your Discord link status")
 async def linkstatus(interaction: discord.Interaction):
     if not await require_authorized(interaction):
@@ -218,8 +214,8 @@ async def unlink(interaction: discord.Interaction):
     removed = False
     for code, data in list(link_requests.items()):
         if data.get("discord_id") == str(interaction.user.id):
-            link_requests[code]["discordLinked"] = False
-            link_requests[code]["discord_id"] = None
+            data["discordLinked"] = False
+            data["discord_id"] = None
             removed = True
     save_db()
     msg = "✅ Your account has been unlinked." if removed else "❌ You were not linked."
