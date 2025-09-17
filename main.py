@@ -15,13 +15,13 @@ DB_FILE = "link_codes.json"
 LOG_WEBHOOK_URL = os.environ.get("LOG_WEBHOOK_URL")
 BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", 0)) 
 AUTHORIZE_URL = "https://discord.com/oauth2/authorize?client_id=1417616334631731310"
+TEST_GUILD_ID = int(os.environ.get("TEST_GUILD_ID", 0))  # add your server ID
 
 if not DISCORD_TOKEN or not LOG_WEBHOOK_URL:
     raise ValueError("DISCORD_TOKEN and LOG_WEBHOOK_URL must be set!")
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="/", intents=intents)
-
 app = Flask(__name__)
 
 if os.path.exists(DB_FILE):
@@ -90,8 +90,9 @@ def check_linkcode(code):
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
-    print(f"Bot online as {bot.user}")
+    guild = discord.Object(id=TEST_GUILD_ID)
+    await bot.tree.sync(guild=guild)  # instant sync for testing
+    print(f"Bot online as {bot.user} | Commands synced to guild {TEST_GUILD_ID}")
 
 async def require_linked(interaction: discord.Interaction):
     for data in link_requests.values():
@@ -109,6 +110,8 @@ async def require_linked(interaction: discord.Interaction):
     view.add_item(button)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     return False
+
+# --- Discord Commands ---
 
 @bot.tree.command(name="linkcode", description="Link your Discord account using Unity code")
 @app_commands.describe(code="6-digit code from Unity")
@@ -143,11 +146,7 @@ async def linkcode(interaction: discord.Interaction, code: str):
 async def linkstatus(interaction: discord.Interaction):
     if not await require_linked(interaction):
         return
-    linked = False
-    for data in link_requests.values():
-        if data.get("discord_id") == str(interaction.user.id) and data.get("discordLinked"):
-            linked = True
-            break
+    linked = any(data.get("discord_id") == str(interaction.user.id) and data.get("discordLinked") for data in link_requests.values())
     status = "Linked ✅" if linked else "Unlinked ❌"
     await interaction.response.send_message(f"Your link status: {status}", ephemeral=True)
 
@@ -202,6 +201,7 @@ async def unregister(interaction: discord.Interaction, code: str):
     save_db()
     await interaction.response.send_message(f"✅ Code {code} unregistered.", ephemeral=True)
 
+# --- Flask Web Server ---
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
