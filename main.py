@@ -79,8 +79,6 @@ def register_linkcode():
         "discordLinked": False
     }
     save_db()
-
-    # 🔥 Send instant webhook for player login
     login_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     webhook_message = {
         "content": (
@@ -97,7 +95,6 @@ def register_linkcode():
         requests.post(LOG_WEBHOOK_URL, json=webhook_message, timeout=5)
     except:
         pass
-
     log_webhook(log_all_linkcodes_embed())
     return jsonify({"success": True, "code": code})
 
@@ -173,14 +170,22 @@ async def linkstatus(interaction: discord.Interaction):
 
 @bot.tree.command(name="unlink", description="Unlink your Discord account")
 async def unlink(interaction: discord.Interaction):
-    removed = False
+    unlinked = False
     for code, data in list(link_requests.items()):
         if data.get("discord_id") == str(interaction.user.id):
+            embed = discord.Embed(title="❌ Player Unlinked", color=discord.Color.red(), timestamp=datetime.utcnow())
+            embed.add_field(name="Master PlayFab ID", value=data.get("playfab_id","N/A"), inline=False)
+            embed.add_field(name="HWID", value=data.get("hwid","N/A"), inline=False)
+            embed.add_field(name="IP", value=data.get("ip","N/A"), inline=False)
+            embed.add_field(name="Link Code", value=code, inline=False)
+            embed.add_field(name="Discord ID", value=interaction.user.id, inline=False)
+            embed.add_field(name="Status", value="❌ Unlinked", inline=False)
+            log_webhook(embed.to_dict())
             link_requests[code]["discordLinked"] = False
             link_requests[code]["discord_id"] = None
-            removed = True
+            unlinked = True
     save_db()
-    msg = "✅ Your account has been unlinked." if removed else "❌ You were not linked."
+    msg = "✅ Your account has been unlinked." if unlinked else "❌ You were not linked."
     await interaction.response.send_message(msg, ephemeral=True)
 
 @bot.tree.command(name="restart", description="Owner-only: restart the bot")
