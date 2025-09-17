@@ -12,7 +12,7 @@ import threading
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 DB_FILE = "link_codes.json"
 LOG_WEBHOOK_URL = os.environ.get("LOG_WEBHOOK_URL")
-BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", 0))  # set your Discord ID as owner
+BOT_OWNER_ID = int(os.environ.get("BOT_OWNER_ID", 0))
 
 if not DISCORD_TOKEN or not LOG_WEBHOOK_URL:
     raise ValueError("DISCORD_TOKEN and LOG_WEBHOOK_URL must be set!")
@@ -154,8 +154,37 @@ async def joinservers(interaction: discord.Interaction):
     if interaction.user.id != BOT_OWNER_ID:
         await interaction.response.send_message("❌ Only the bot owner can run this.", ephemeral=True)
         return
-    # placeholder for your join servers logic
     await interaction.response.send_message("✅ joinservers executed (placeholder)", ephemeral=True)
+
+# NEW UNREGISTER COMMAND
+@bot.tree.command(name="unregister", description="Unregister a link code")
+@app_commands.describe(code="6-digit link code to unregister")
+async def unregister(interaction: discord.Interaction, code: str):
+    data = link_requests.get(code)
+    if not data:
+        await interaction.response.send_message("❌ Code not found.", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title="🗑️ Link Code Unregistered",
+        color=discord.Color.red(),
+        timestamp=datetime.utcnow()
+    )
+    embed.add_field(name="Link Code", value=code, inline=False)
+    embed.add_field(name="PlayFab ID", value=data.get("playfab_id", "null"), inline=False)
+    embed.add_field(name="HWID", value=data.get("hwid", "null"), inline=False)
+    embed.add_field(name="IP", value=data.get("ip", "null"), inline=False)
+    embed.add_field(name="Discord Linked", value="Yes" if data.get("discordLinked") else "No", inline=False)
+    embed.add_field(name="Time", value=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), inline=False)
+
+    try:
+        requests.post(LOG_WEBHOOK_URL, json={"embeds": [embed.to_dict()]}, timeout=5)
+    except Exception as e:
+        print("Failed to send webhook:", e)
+
+    del link_requests[code]
+    save_db()
+    await interaction.response.send_message(f"✅ Code {code} unregistered.", ephemeral=True)
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
