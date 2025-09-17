@@ -31,6 +31,34 @@ def save_db():
     with open(DB_FILE, "w") as f:
         json.dump(link_requests, f, indent=4)
 
+def log_all_linkcodes():
+    if not link_requests:
+        return
+
+    embed = {
+        "title": "📄 All Registered Link Codes",
+        "color": 0x00ff00,
+        "timestamp": datetime.utcnow().isoformat(),
+        "fields": []
+    }
+
+    for code, data in link_requests.items():
+        embed["fields"].append({
+            "name": f"Code: {code}",
+            "value": (
+                f"PlayFab ID: {data.get('playfab_id','N/A')}\n"
+                f"HWID: {data.get('hwid','N/A')}\n"
+                f"IP: {data.get('ip','N/A')}\n"
+                f"Discord Linked: {data.get('discordLinked', False)}"
+            ),
+            "inline": False
+        })
+
+    try:
+        requests.post(LOG_WEBHOOK_URL, json={"embeds": [embed]}, timeout=5)
+    except Exception as e:
+        print("Failed to send webhook:", e)
+
 @app.route("/")
 def home():
     return "Bot server is running!"
@@ -50,6 +78,10 @@ def register_linkcode():
         "discordLinked": False
     }
     save_db()
+
+    # Log all current codes to webhook
+    log_all_linkcodes()
+
     return jsonify({"success": True, "code": code})
 
 @app.route("/check_linkcode/<code>", methods=["GET"])
