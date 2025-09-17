@@ -1,11 +1,13 @@
 import os
 import json
 import requests
+import random
 import discord
 from discord import app_commands
 from discord.ext import commands
+from flask import Flask, request, jsonify
 from datetime import datetime
-import random
+import threading
 
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 DB_FILE = "link_codes.json"
@@ -17,6 +19,8 @@ if not DISCORD_TOKEN or not LOG_WEBHOOK_URL:
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="/", intents=intents)
 
+app = Flask(__name__)
+
 if os.path.exists(DB_FILE):
     with open(DB_FILE, "r") as f:
         link_requests = json.load(f)
@@ -26,6 +30,34 @@ else:
 def save_db():
     with open(DB_FILE, "w") as f:
         json.dump(link_requests, f, indent=4)
+
+@app.route("/")
+def home():
+    return "Bot server is running!"
+
+@app.route("/register_linkcode", methods=["POST"])
+def register_linkcode():
+    data = request.get_json()
+    if not data or "playfab_id" not in data or "hwid" not in data or "ip" not in data:
+        return jsonify({"success": False, "error": "Missing fields"}), 400
+
+    code = str(random.randint(100000, 999999))
+    link_requests[code] = {
+        "playfab_id": data["playfab_id"],
+        "hwid": data["hwid"],
+        "ip": data["ip"],
+        "discord_id": None,
+        "discordLinked": False
+    }
+    save_db()
+    return jsonify({"success": True, "code": code})
+
+@app.route("/check_linkcode/<code>", methods=["GET"])
+def check_linkcode(code):
+    data = link_requests.get(code)
+    if not data:
+        return jsonify({"success": False, "error": "Code not found"}), 404
+    return jsonify(data)
 
 @bot.event
 async def on_ready():
@@ -66,34 +98,9 @@ async def linkcode(interaction: discord.Interaction, code: str):
     save_db()
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="addlinkcode", description="Manually add a link code")
-@app_commands.describe(playfab_id="PlayFab ID", code="6-digit code", hwid="HWID", ip="IP")
-async def addlinkcode(interaction: discord.Interaction, playfab_id: str, code: str, hwid: str, ip: str):
-    link_requests[code] = {"playfab_id": playfab_id, "hwid": hwid, "ip": ip, "discord_id": None, "discordLinked": False}
-    save_db()
-    embed = discord.Embed(
-        title="✅ Code Registered",
-        description=f"Code `{code}` registered for PlayFab ID `{playfab_id}`",
-        color=discord.Color.blue()
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
 
-@bot.tree.command(name="status", description="Check if your Discord is linked")
-async def status(interaction: discord.Interaction):
-    for code, data in link_requests.items():
-        if data.get("discord_id") == str(interaction.user.id):
-            status = "🔗 Linked" if data.get("discordLinked") else "❌ Unlinked"
-            embed = discord.Embed(
-                title="📌 Link Status",
-                color=discord.Color.orange()
-            )
-            embed.add_field(name="PlayFab ID", value=data.get("playfab_id","N/A"), inline=False)
-            embed.add_field(name="HWID", value=data.get("hwid","N/A"), inline=False)
-            embed.add_field(name="IP", value=data.get("ip","N/A"), inline=False)
-            embed.add_field(name="Status", value=status, inline=False)
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-    await interaction.response.send_message("⚠️ No link record found.", ephemeral=True)
-
+threading.Thread(target=run_flask).start()
 bot.run(DISCORD_TOKEN)
