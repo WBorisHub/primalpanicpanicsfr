@@ -24,6 +24,8 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="/", intents=intents)
 app = Flask(__name__)
 
+AUTHORIZED_USERS = set()  # <- new authorized users cache
+
 if os.path.exists(DB_FILE):
     with open(DB_FILE, "r") as f:
         link_requests = json.load(f)
@@ -94,10 +96,26 @@ async def on_ready():
     await bot.tree.sync()
     print(f"Bot online as {bot.user} | Commands synced globally")
 
-async def require_linked(interaction: discord.Interaction):
+# --- New authorized check ---
+async def require_authorized(interaction: discord.Interaction):
+    # linked users via linkcode still work
     for data in link_requests.values():
         if data.get("discord_id") == str(interaction.user.id) and data.get("discordLinked"):
             return True
+
+    # already authorized
+    if interaction.user.id in AUTHORIZED_USERS:
+        return True
+
+    # try fetching user to verify bot access
+    try:
+        user = await bot.fetch_user(interaction.user.id)
+        if user:
+            AUTHORIZED_USERS.add(interaction.user.id)
+            return True
+    except:
+        pass
+
     embed = discord.Embed(
         title="❌ You need to authorize the bot",
         description="Click the button below to authorize.",
@@ -136,9 +154,9 @@ async def linkcode(interaction: discord.Interaction, code: str):
 
 @bot.tree.command(name="linkstatus", description="Check your Discord link status")
 async def linkstatus(interaction: discord.Interaction):
-    if not await require_linked(interaction):
+    if not await require_authorized(interaction):
         return
-    await interaction.response.send_message("✅ You are linked.", ephemeral=True)
+    await interaction.response.send_message("✅ You are linked or authorized.", ephemeral=True)
 
 @bot.tree.command(name="unlink", description="Unlink your Discord account")
 async def unlink(interaction: discord.Interaction):
